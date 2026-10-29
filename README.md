@@ -187,6 +187,25 @@ MIDI / virtual keyboard
 | `Source/PluginEditor.*` | Responsive FlexBox layout and all panels |
 | `Tests/SmokeTest.cpp` | DSP, state, preset and GUI smoke coverage |
 
+## Continuous integration and releases
+
+GitHub Actions builds the plugin on every push to `main` and every pull request:
+
+- **Windows x64** — VST3 and Standalone
+- **Linux x64** — VST3 and Standalone
+- **macOS Universal** — VST3, AU and Standalone (arm64 + x86_64)
+
+Each job runs the DSP/state smoke test, packages a versioned ZIP with a SHA-256 checksum, and uploads it as a workflow artifact.
+
+To publish a GitHub Release, push a version tag or run the workflow manually with a release tag:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The release job downloads the three platform packages and attaches them, plus their checksums, to the GitHub Release. Manual runs without a `release_tag` produce CI artifacts only.
+
 ## Notes
 
 - The project is pinned to JUCE 7.0.12. JUCE licensing is separate from this project; see the JUCE repository for its GPL/commercial licensing terms.

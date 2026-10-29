@@ -1,0 +1,262 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional release tag (e.g. v1.0.0). Leave empty for CI artifacts only."
+        required: false
+        type: string
+  push:
+    branches: [ main ]
+    tags: [ "v*" ]
+    paths:
+      - "Source/**"
+      - "Tests/**"
+      - "Preview/**"
+      - "CMakeLists.txt"
+      - "README.md"
+      - ".github/workflows/build.yml"
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    name: Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build-windows -A x64 `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DSYNTHWAVE_BUILD_TESTS=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build-windows --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run smoke test
+        shell: pwsh
+        run: |
+          & "build-windows\SynthwaveLegacyTests_artefacts\Release\SynthwaveLegacyTests.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package Windows distribution
+        shell: pwsh
+        run: |
+          $stage = "stage-windows"
+          Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $stage | Out-Null
+
+          Copy-Item -Recurse -Force "build-windows\SynthwaveLegacy_artefacts\Release\VST3\*.vst3" $stage
+          Copy-Item -Recurse -Force "build-windows\SynthwaveLegacy_artefacts\Release\Standalone\*.exe" $stage
+          if (Test-Path "README.md") { Copy-Item -Force "README.md" $stage }
+
+          $cmake = Get-Content "CMakeLists.txt" -Raw
+          if ($cmake -notmatch 'project\(\s*[A-Za-z0-9_-]+\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
+            throw "Could not read project version from CMakeLists.txt"
+          }
+          $version = $Matches[1]
+
+          $zip = "SynthwaveLegacy-Windows-x64-v$version.zip"
+          Compress-Archive -Path "$stage\*" -DestinationPath $zip -Force
+
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $zip" | Out-File -Encoding ascii "SynthwaveLegacy-Windows-x64-v$version.sha256"
+          Get-Item $zip | Format-List Name, Length
+
+      - name: Upload Windows distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: SynthwaveLegacy-Windows-x64
+          path: |
+            SynthwaveLegacy-Windows-x64-v*.zip
+            SynthwaveLegacy-Windows-x64-v*.sha256
+          if-no-files-found: error
+
+  linux-x64:
+    name: Linux x64
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config zip \
+            libasound2-dev libx11-dev libxext-dev libxinerama-dev libxrandr-dev \
+            libxcursor-dev libxcomposite-dev libxrender-dev libxfixes-dev libxi-dev \
+            libsm-dev libice-dev libx11-xcb-dev libxcb1-dev libgl1-mesa-dev \
+            libexpat1-dev zlib1g-dev libpng-dev libbrotli-dev libbz2-dev
+
+          if apt-cache show libfreetype-dev >/dev/null 2>&1; then
+            FREETYPE_PACKAGE=libfreetype-dev
+          else
+            FREETYPE_PACKAGE=libfreetype6-dev
+          fi
+
+          if apt-cache show libfontconfig-dev >/dev/null 2>&1; then
+            FONTCONFIG_PACKAGE=libfontconfig-dev
+          else
+            FONTCONFIG_PACKAGE=libfontconfig1-dev
+          fi
+
+          sudo apt-get install -y --no-install-recommends "$FREETYPE_PACKAGE" "$FONTCONFIG_PACKAGE"
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSYNTHWAVE_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build-linux --parallel
+
+      - name: Run smoke test
+        run: ./build-linux/SynthwaveLegacyTests_artefacts/Release/SynthwaveLegacyTests
+
+      - name: Package Linux distribution
+        run: |
+          set -euo pipefail
+
+          VERSION="$(sed -nE '/^project\(/,/\)/ s/.*VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt | head -n 1)"
+          if [ -z "$VERSION" ]; then
+            echo "Could not read project version from CMakeLists.txt" >&2
+            exit 1
+          fi
+
+          STAGE="stage-linux"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          cp -a build-linux/SynthwaveLegacy_artefacts/Release/VST3/*.vst3 "$STAGE/"
+          cp build-linux/SynthwaveLegacy_artefacts/Release/Standalone/* "$STAGE/"
+          [ -f README.md ] && cp README.md "$STAGE/"
+          find "$STAGE" -type f -name "*.so" -exec strip --strip-unneeded {} + 2>/dev/null || true
+
+          ZIP="SynthwaveLegacy-Linux-x64-v${VERSION}.zip"
+          (cd "$STAGE" && zip -q -r "../${ZIP}" .)
+          sha256sum "$ZIP" > "SynthwaveLegacy-Linux-x64-v${VERSION}.sha256"
+          ls -lh "$ZIP"
+
+      - name: Upload Linux distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: SynthwaveLegacy-Linux-x64
+          path: |
+            SynthwaveLegacy-Linux-x64-v*.zip
+            SynthwaveLegacy-Linux-x64-v*.sha256
+          if-no-files-found: error
+
+  macos-universal:
+    name: macOS Universal
+    runs-on: macos-15
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - name: Configure Universal Binary
+        run: |
+          cmake -S . -B build-macos -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="11.0" \
+            -DSYNTHWAVE_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build-macos --parallel
+
+      - name: Run smoke test
+        run: ./build-macos/SynthwaveLegacyTests_artefacts/Release/SynthwaveLegacyTests
+
+      - name: Ad-hoc sign macOS bundles
+        run: |
+          for bundle in build-macos/SynthwaveLegacy_artefacts/Release/VST3/*.vst3 \
+                        build-macos/SynthwaveLegacy_artefacts/Release/AU/*.component \
+                        build-macos/SynthwaveLegacy_artefacts/Release/Standalone/*.app; do
+            if [ -e "$bundle" ]; then
+              codesign --force --deep --sign - "$bundle"
+            fi
+          done
+
+      - name: Package macOS distribution
+        run: |
+          set -euo pipefail
+
+          VERSION="$(sed -nE '/^project\(/,/\)/ s/.*VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt | head -n 1)"
+          if [ -z "$VERSION" ]; then
+            echo "Could not read project version from CMakeLists.txt" >&2
+            exit 1
+          fi
+
+          STAGE="stage-macos"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          cp -R build-macos/SynthwaveLegacy_artefacts/Release/VST3/*.vst3 "$STAGE/"
+          cp -R build-macos/SynthwaveLegacy_artefacts/Release/AU/*.component "$STAGE/"
+          cp -R build-macos/SynthwaveLegacy_artefacts/Release/Standalone/*.app "$STAGE/"
+          [ -f README.md ] && cp README.md "$STAGE/"
+
+          ZIP="SynthwaveLegacy-macOS-Universal-v${VERSION}.zip"
+          ditto -c -k --sequesterRsrc "$STAGE" "$ZIP"
+          shasum -a 256 "$ZIP" > "SynthwaveLegacy-macOS-Universal-v${VERSION}.sha256"
+          ls -lh "$ZIP"
+
+      - name: Upload macOS distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: SynthwaveLegacy-macOS-Universal
+          path: |
+            SynthwaveLegacy-macOS-Universal-v*.zip
+            SynthwaveLegacy-macOS-Universal-v*.sha256
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish release
+    needs: [ windows-x64, linux-x64, macos-universal ]
+    if: ${{ github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: SynthwaveLegacy-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: Synthwave Legacy ${{ inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            release-assets/*.zip
+            release-assets/*.sha256
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          generate_release_notes: true
+          prerelease: ${{ contains(inputs.release_tag || github.ref_name, '-') }}
