@@ -242,7 +242,7 @@ int main (int argc, char* argv[])
     {
         if (juce::String (argv[i]) == "--render-demo")
         {
-            const juce::File outputFile (juce::String (argv[i + 1]));
+            const juce::File outputFile { juce::String (argv[i + 1]) };
             auto& tree = processor.getValueTreeState();
             const auto set = [&tree] (const char* id, float value)
             {
@@ -315,7 +315,7 @@ int main (int argc, char* argv[])
     {
         if (juce::String (argv[i]) == "--gui-snapshot")
         {
-            const juce::File outputFile (juce::String (argv[i + 1]));
+            const juce::File outputFile { juce::String (argv[i + 1]) };
 
             processor.loadFactoryPreset (1);
             processor.reset();
