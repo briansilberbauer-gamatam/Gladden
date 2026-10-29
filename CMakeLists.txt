@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(SynthwaveLegacy
-    VERSION 1.0.0
+    VERSION 1.0.1
     DESCRIPTION "Synthwave Legacy - 16-voice virtual analog synthesizer"
     LANGUAGES CXX)
 

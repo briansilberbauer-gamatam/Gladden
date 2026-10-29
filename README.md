@@ -202,8 +202,8 @@ Each job runs the DSP/state smoke test, packages a versioned ZIP with a SHA-256 
 To publish a GitHub Release, push a version tag or run the workflow manually with a release tag:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 The release job downloads the three platform packages and attaches them, plus their checksums, to the GitHub Release. Manual runs without a `release_tag` produce CI artifacts only.
