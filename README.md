@@ -103,6 +103,8 @@ Artifacts are placed under:
 
 On macOS, AU is included in the generated formats. On Linux, VST3 and Standalone are built.
 
+When building on macOS 15 or newer, the pinned JUCE 7.0.12 needs a small compatibility patch because its `juceaide` helper calls an API that the macOS 15 SDK marks unavailable. The CI workflow applies [`patch-juce-macos15.py`](.github/scripts/patch-juce-macos15.py) to a fresh JUCE checkout; local builds against the macOS 15 SDK need the same patch (or an older SDK).
+
 ## Tests
 
 ```bash

@@ -17,6 +17,7 @@ on:
       - "CMakeLists.txt"
       - "README.md"
       - ".github/workflows/build.yml"
+      - ".github/scripts/**"
   pull_request:
     branches: [ main ]
 
@@ -44,8 +45,21 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          cmake --build build-windows --config Release --parallel
+          cmake --build build-windows --config Release --parallel 2>&1 | Tee-Object -FilePath build-windows.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Report Windows build errors
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path build-windows.log) {
+            Select-String -Path build-windows.log -Pattern 'error C[0-9]+|fatal error|LNK[0-9]+' |
+              Select-Object -Last 20 |
+              ForEach-Object {
+                $message = $_.Line.Trim().Replace('%', '%25')
+                Write-Host "::error file=build-windows.log::$message"
+              }
+          }
 
       - name: Run smoke test
         shell: pwsh
@@ -175,16 +189,42 @@ jobs:
       - name: Install Ninja
         run: brew install ninja
 
+      - name: Fetch JUCE and apply macOS 15 SDK patch
+        run: |
+          git clone --depth 1 --branch 7.0.12 \
+            https://github.com/juce-framework/JUCE.git external/JUCE
+          python3 .github/scripts/patch-juce-macos15.py external/JUCE
+
       - name: Configure Universal Binary
         run: |
+          set -o pipefail
           cmake -S . -B build-macos -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="11.0" \
-            -DSYNTHWAVE_BUILD_TESTS=ON
+            -DSYNTHWAVE_JUCE_DIR="$PWD/external/JUCE" \
+            -DSYNTHWAVE_BUILD_TESTS=ON 2>&1 | tee cmake-configure-macos.log
+
+      - name: Report macOS configure errors
+        if: failure()
+        run: |
+          python3 .github/scripts/report-log-errors.py \
+            cmake-configure-macos.log \
+            "macOS CMake configure failed" \
+            "CMake Error|error:|fatal error"
 
       - name: Build
-        run: cmake --build build-macos --parallel
+        run: |
+          set -o pipefail
+          cmake --build build-macos --parallel 2>&1 | tee cmake-build-macos.log
+
+      - name: Report macOS build errors
+        if: failure()
+        run: |
+          python3 .github/scripts/report-log-errors.py \
+            cmake-build-macos.log \
+            "macOS build failed" \
+            "error:|fatal error|ld: "
 
       - name: Run smoke test
         run: ./build-macos/SynthwaveLegacyTests_artefacts/Release/SynthwaveLegacyTests
