@@ -1,0 +1,23 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+.cache/
+
+# Fetched/third-party dependencies
+external/
+.build-deps/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local audio/render scratch
+Preview/demo*.wav
+Preview/demo*.aiff
